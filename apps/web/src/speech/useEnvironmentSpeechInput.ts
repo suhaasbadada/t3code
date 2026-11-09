@@ -93,7 +93,10 @@ function detachRecording(
   if (
     !detachDraft ||
     snapshot?.ownerKey !== ownerKey ||
-    (phase !== "recording" && phase !== "transcribing" && phase !== "post-processing")
+    (phase !== "recording" &&
+      phase !== "transcribing" &&
+      phase !== "post-processing" &&
+      !(phase === "error" && controller.canRetryRecording))
   )
     return false;
   detachedRef.current = { snapshot, access: detachDraft() };
@@ -437,10 +440,15 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         const detached = detachedRef.current;
         if (detached) {
           if (value.phase !== "idle" && value.phase !== "error") return;
+          if (value.phase === "error" && !disposed && controller.canRetryRecording) {
+            failDetached(
+              `${value.error} Return to the original thread to retry or discard the recording.`,
+            );
+            return;
+          }
           detachedRef.current = null;
           if (value.phase === "error") {
             failDetached(value.error);
-            // Drops the audio kept for Retry; no editor shows this recording to offer it.
             controller.cancel();
           }
           return;
@@ -461,6 +469,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       const last = latestRef.current.input;
       if (
         unmountingRef.current &&
+        controller.currentState.phase !== "error" &&
         (detachedRef.current ||
           detachRecording(controller, detachedRef, lastSnapshotRef.current, last))
       )
@@ -590,10 +599,15 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const start = useStableCallback(async () => {
     if (latestRef.current.input.disabled || (setup.open && setup.downloading)) return;
     if (detachedRef.current) {
+      const retained = controllerRef.current?.canRetryRecording;
       toastManager.add({
         type: "info",
-        title: "Finishing dictation for the previous thread",
-        description: "Try again in a moment.",
+        title: retained
+          ? "A recording is waiting for retry in the previous thread"
+          : "Finishing dictation for the previous thread",
+        description: retained
+          ? "Return to that thread to retry or discard the recording."
+          : "Try again in a moment.",
       });
       return;
     }

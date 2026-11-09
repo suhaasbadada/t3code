@@ -259,6 +259,10 @@ export class VoiceInputController {
     return this.state;
   }
 
+  get canRetryRecording(): boolean {
+    return this.retryRecording !== null;
+  }
+
   async start(): Promise<void> {
     if (this.state.phase !== "idle" && this.state.phase !== "error") return;
     const initiatingDraft = this.dependencies.readDraft();
@@ -515,16 +519,11 @@ export class VoiceInputController {
           ));
       } catch (error) {
         if (this.isCurrent(operationToken)) {
-          if (
-            this.dependencies.retryFailedRecording &&
-            !this.liveTranscription &&
-            !transcription.streaming &&
-            recordingUri
-          ) {
+          if (this.dependencies.retryFailedRecording && !this.liveTranscription && recordingUri) {
             this.retryRecording = {
               uri: recordingUri,
               ownerKey: capturedDraft.ownerKey,
-              transcription,
+              transcription: { locale: transcription.locale, transcribe: transcription.transcribe },
             };
           }
           this.setError(transcriptionErrorMessage(error), "retry");

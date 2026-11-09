@@ -88,30 +88,40 @@ function createHarness(
 describe("environment voice input", () => {
   beforeEach(() => resetVoiceInputGlobalsForTests());
 
-  it("retries failed batch audio without recording again, then deletes it", async () => {
-    const transcribe = vi
-      .fn<PreparedVoiceTranscription["transcribe"]>()
-      .mockRejectedValueOnce(new Error("inference failed"))
-      .mockResolvedValueOnce("recovered text");
-    const harness = createHarness({
-      retryFailedRecording: true,
-      getTranscriber: () => ({ prepare: async () => preparedTranscription(transcribe) }),
-    });
-    await harness.controller.start();
-    await harness.controller.stop();
-    expect(harness.controller.currentState.phase).toBe("error");
-    expect(harness.deleted).toEqual([]);
+  it.each([false, true])(
+    "retries failed audio (streaming: %s) without recording again, then deletes it",
+    async (streaming) => {
+      const transcribe = vi
+        .fn<PreparedVoiceTranscription["transcribe"]>()
+        .mockRejectedValueOnce(new Error("inference failed"))
+        .mockResolvedValueOnce("recovered text");
+      const harness = createHarness({
+        retryFailedRecording: true,
+        getTranscriber: () => ({
+          prepare: async () => ({
+            ...preparedTranscription(transcribe),
+            ...(streaming
+              ? { streaming: { finish: (options) => transcribe("file:///voice.m4a", options) } }
+              : {}),
+          }),
+        }),
+      });
+      await harness.controller.start();
+      await harness.controller.stop();
+      expect(harness.controller.currentState.phase).toBe("error");
+      expect(harness.deleted).toEqual([]);
 
-    harness.setDraft(draft({ text: "updated ", revision: 2, selection: { start: 8, end: 8 } }));
-    await harness.controller.start();
-    expect(transcribe.mock.calls.map(([uri]) => uri)).toEqual([
-      "file:///voice.m4a",
-      "file:///voice.m4a",
-    ]);
-    expect(harness.recorder.record).toHaveBeenCalledOnce();
-    expect(harness.commits[0]?.text).toBe("updated recovered text");
-    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
-  });
+      harness.setDraft(draft({ text: "updated ", revision: 2, selection: { start: 8, end: 8 } }));
+      await harness.controller.start();
+      expect(transcribe.mock.calls.map(([uri]) => uri)).toEqual([
+        "file:///voice.m4a",
+        "file:///voice.m4a",
+      ]);
+      expect(harness.recorder.record).toHaveBeenCalledOnce();
+      expect(harness.commits[0]?.text).toBe("updated recovered text");
+      expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+    },
+  );
 
   it("deletes retained failed audio when the user cancels instead of retrying", async () => {
     const harness = createHarness({
