@@ -51,6 +51,7 @@ const mocks = vi.hoisted(() => ({
   platforms: [] as string[],
   microphoneRequests: [] as string[],
   transcribeCalls: [] as string[],
+  deletedRecordings: [] as string[],
   cleanupCalls: [] as string[],
   cleanupDraft: vi.fn(),
   cleanupOptions: [] as SpeechPostProcessingOptions[],
@@ -196,7 +197,9 @@ vi.mock("./browserVoiceInput", () => ({
         },
       },
       cancelRecording() {},
-      deleteRecording() {},
+      deleteRecording(uri: string) {
+        mocks.deletedRecordings.push(uri);
+      },
     };
   },
 }));
@@ -226,6 +229,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.platforms = [];
   mocks.microphoneRequests = [];
   mocks.transcribeCalls = [];
+  mocks.deletedRecordings = [];
   mocks.cleanupCalls = [];
   mocks.cleanupDraft.mockClear();
   mocks.cleanupOptions = [];
@@ -450,21 +454,61 @@ it("still abandons a detachable recording when the destination changes", async (
   expect(drafts["thread-a"]).toBe("Fix dictated");
 });
 
-it("drops a detached recording whose transcription failed and leaves its thread idle", async () => {
-  setup({ destination: "env-a" });
-  vi.mocked(toastManager.add).mockClear();
-  mocks.transcripts = [new Error("inference failed")];
-  const drafts: Record<string, string> = { "thread-a": "Fix", "thread-b": "" };
-  await using screen = await render(<ThreadProbe owner="thread-a" drafts={drafts} />);
-  await act(() => mocks.voice.start());
-  await screen.rerender(<ThreadProbe owner="thread-b" drafts={drafts} />);
-  await vi.waitFor(() =>
-    expect(toastManager.add).toHaveBeenCalledWith(expect.objectContaining({ type: "error" })),
-  );
-  await screen.rerender(<ThreadProbe owner="thread-a" drafts={drafts} />);
-  expect(mocks.voice.state.phase).toBe("idle");
-  expect(drafts["thread-a"]).toBe("Fix");
-});
+it.each(["retry", "cancel", "unmount", "consent", "unmount-before-failure"] as const)(
+  "keeps failed detached audio for its original owner until %s",
+  async (action) => {
+    setup({ destination: "env-a" });
+    vi.mocked(toastManager.add).mockClear();
+    mocks.transcripts = [new Error("inference failed"), "recovered"];
+    const submit = vi.fn();
+    const drafts: Record<string, string> = { "thread-a": "Fix", "thread-b": "" };
+    await using screen = await render(<ThreadProbe owner="thread-a" drafts={drafts} />);
+    await act(() => mocks.voice.start());
+    const finishing = mocks.voice.stop();
+    await act(() => mocks.voice.submitAfterDictation(submit));
+    await screen.rerender(
+      action === "unmount-before-failure" ? (
+        <div />
+      ) : (
+        <ThreadProbe owner="thread-b" drafts={drafts} />
+      ),
+    );
+    await act(() => finishing);
+    if (action === "unmount-before-failure") {
+      expect(mocks.deletedRecordings).toEqual(["blob:env-a"]);
+      expect(drafts["thread-a"]).toBe("Fix");
+      return;
+    }
+    expect(mocks.voice.state.phase).toBe("idle");
+    expect(mocks.deletedRecordings).toEqual([]);
+    await act(() => mocks.voice.start());
+    await act(() => mocks.voice.cancel());
+    expect(mocks.microphoneRequests).toEqual(["env-a"]);
+    expect(mocks.deletedRecordings).toEqual([]);
+    if (action === "unmount") {
+      await screen.rerender(<div />);
+    } else if (action === "consent") {
+      setDestination("env-b");
+      await screen.rerender(<ThreadProbe owner="thread-b" drafts={drafts} />);
+    } else {
+      await screen.rerender(<ThreadProbe owner="thread-a" drafts={drafts} />);
+      expect(mocks.voice.state.phase).toBe("error");
+      await screen.rerender(<ThreadProbe owner="thread-b" drafts={drafts} />);
+      expect(mocks.deletedRecordings).toEqual([]);
+      await screen.rerender(<ThreadProbe owner="thread-a" drafts={drafts} />);
+      if (action === "retry") {
+        drafts["thread-a"] = "Edited";
+        await act(() => mocks.voice.start());
+        expect(mocks.transcribeCalls).toEqual(["env-a", "env-a"]);
+        expect(mocks.microphoneRequests).toEqual(["env-a"]);
+        expect(drafts["thread-a"]).toBe("Edited recovered");
+      } else await act(() => mocks.voice.cancel());
+    }
+    expect(drafts["thread-b"]).toBe("");
+    expect(submit).not.toHaveBeenCalled();
+    expect(mocks.deletedRecordings).toEqual(["blob:env-a"]);
+  },
+);
 
 it("does not start or cancel from another thread while the previous one finishes", async () => {
   setup({ destination: "env-a" });

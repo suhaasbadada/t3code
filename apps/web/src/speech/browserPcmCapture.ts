@@ -107,7 +107,7 @@ export function createBrowserPcmCapture(
             return;
           }
           if (feed) feed(data);
-          else chunks.push(data);
+          chunks.push(data);
         };
         node.onprocessorerror = () => {
           stopped?.reject(new Error("Microphone processing failed."));
@@ -149,7 +149,7 @@ export function createBrowserPcmCapture(
       worklet.port.postMessage("stop");
       try {
         await pending;
-        if (!feed && chunks.length) {
+        if (chunks.length) {
           const blob = new Blob(chunks, { type: "application/octet-stream" });
           recordingUri = URL.createObjectURL(blob);
         }

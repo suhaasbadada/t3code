@@ -75,9 +75,11 @@ five minutes. Text is inserted at the cursor or replaces the selection you had
 when recording started, and the editor is read-only while dictation runs.
 Switching threads while dictating in the composer finishes the recording into
 the draft of the thread you started in; dictation in another thread can start
-once it is done. If that transcript cannot be added, a notification says why and
-the recording is discarded. A spoken answer to an agent's question is discarded
-instead.
+once it is done. If transcription fails while the composer remains open, return
+to the original thread to retry or discard its recording before starting another.
+Closing the composer or changing the voice destination discards retained audio.
+Other failures show a notification and discard the recording. A spoken answer
+to an agent's question is discarded instead.
 
 Pressing Send while dictating finishes the recording and sends the draft once
 the transcript has been inserted. Cancelling also cancels that queued send. In
